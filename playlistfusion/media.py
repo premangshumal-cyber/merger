@@ -235,7 +235,7 @@ def merge_files(paths: list[Path], titles: list[str], output: Path,
             ffmetadata(titles, [i.duration for i in processed], meta)
             final = work / ("chaptered." + output.suffix.lstrip("."))
             run(["-i", str(merged), "-i", str(meta), "-map", "0",
-                 "-map_metadata", "1", "-c", "copy", str(final)],
+                 "-map_metadata", "1", "-map_chapters", "1", "-c", "copy", str(final)],
                 "Writing chapters", expected, progress, cancelled)
         if progress:
             progress("Verifying", None, "Checking output streams and duration")

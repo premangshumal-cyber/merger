@@ -103,6 +103,9 @@ def download(entry: Entry, destination: Path, quality: str = "best",
         "socket_timeout": 30, "progress_hooks": [hook],
         "restrictfilenames": True, "ignoreerrors": False,
     }
+    # yt-dlp needs the bundled FFmpeg folder even when it is not on PATH.
+    from .media import executable
+    opts["ffmpeg_location"] = str(Path(executable("ffmpeg")).parent)
     if speed_limit_kib > 0:
         opts["ratelimit"] = speed_limit_kib * 1024
     try:
