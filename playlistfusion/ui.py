@@ -366,7 +366,7 @@ class MainWindow(QMainWindow):
             if video_id(self.single_url.text()) != project.entries[0].video_id:
                 raise ValueError("The link changed. Analyze the new video first.")
             speed = max(0, int(self.speed_box.text().strip() or "0"))
-        except (ValueError, Exception) as exc:
+        except Exception as exc:
             QMessageBox.warning(self, "Check download settings", str(exc))
             return
         response = QMessageBox.question(
