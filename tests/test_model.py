@@ -47,6 +47,14 @@ def test_project_round_trip_and_order(tmp_path):
     assert loaded.entries[1].video_id == "abc"
 
 
+def test_running_history_does_not_interrupt_active_worker(tmp_path):
+    store = ProjectStore(tmp_path)
+    p = Project(status="processing")
+    store.save(p)
+    assert store.recent(recover=False)[0].status == "processing"
+    assert store.load(p.id).status == "processing"
+
+
 def test_recovery(tmp_path):
     store = ProjectStore(tmp_path)
     p = Project(status="processing")
