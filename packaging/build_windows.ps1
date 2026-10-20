@@ -22,7 +22,7 @@ python -m pytest -q
 if ($LASTEXITCODE -ne 0) { throw "Tests failed; stopping the build" }
 
 $env:QT_QPA_PLATFORM = "offscreen"
-python -c "from PySide6.QtWidgets import QApplication; from playlistfusion.ui import MainWindow; a=QApplication([]); w=MainWindow(); print(w.windowTitle()); w.close()"
+python -c "from PySide6.QtWidgets import QApplication; from playlistfusion.ui import MainWindow; a=QApplication([]); w=MainWindow(); w.navigate(5); assert w.stack.currentIndex()==5; assert w.single_download_button.text()=='Download Video'; print(w.windowTitle()); w.close()"
 if ($LASTEXITCODE -ne 0) { throw "GUI smoke test failed" }
 Remove-Item Env:\QT_QPA_PLATFORM
 
