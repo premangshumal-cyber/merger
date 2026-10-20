@@ -21,6 +21,7 @@ from .model import Entry, Project, ProjectStore, safe_filename
 from .playlist import analyze
 from .engine import process
 from .media import executable
+from .single_video import inspect_single, download_single, video_id
 
 ACCENT = "#24d3c1"
 STYLE = """
@@ -144,6 +145,13 @@ class Worker(QThread):
         try:
             if self.mode == "analyze":
                 self.result_ready.emit(analyze(self.url, self.report))
+            elif self.mode == "single_analyze":
+                self.result_ready.emit(inspect_single(self.url, self.report))
+            elif self.mode == "single_download":
+                assert self.project is not None
+                path = download_single(self.project, self.store, self.report,
+                                       self.cancelled, self.speed_limit)
+                self.result_ready.emit(str(path))
             else:
                 assert self.project is not None
                 path = process(self.project, self.store, self.report,
@@ -168,6 +176,7 @@ class MainWindow(QMainWindow):
         self.store = ProjectStore()
         self.settings = self.store.get_settings()
         self.project: Project | None = None
+        self.single_project: Project | None = None
         self.worker: Worker | None = None
         self.setWindowTitle("PlaylistFusion  •  One Playlist. One Video.")
         self.resize(1180, 780)
@@ -196,8 +205,12 @@ class MainWindow(QMainWindow):
         side.addSpacing(27)
 
         self.nav = []
-        for i, title in enumerate(("Dashboard", "Playlist Editor", "Processing", "Completed", "Settings")):
-            b = button(title, lambda _=False, index=i: self.navigate(index))
+        pages = ((0, "Dashboard"), (5, "Single Video Downloader"),
+                 (1, "Playlist Editor"), (2, "Processing"),
+                 (3, "Completed"), (4, "Settings"))
+        self.nav_pages = [index for index, _ in pages]
+        for index, title in pages:
+            b = button(title, lambda _=False, page=index: self.navigate(page))
             b.setObjectName("nav")
             b.setCheckable(True)
             self.nav.append(b)
@@ -213,12 +226,13 @@ class MainWindow(QMainWindow):
         self._processing()
         self._completed()
         self._settings_page()
+        self._single_video_page()
         self.navigate(0)
 
     def navigate(self, index):
         self.stack.setCurrentIndex(index)
-        for i, b in enumerate(self.nav):
-            b.setChecked(i == index)
+        for page, b in zip(self.nav_pages, self.nav):
+            b.setChecked(page == index)
         if index == 3:
             self.refresh_history()
 
@@ -237,6 +251,7 @@ class MainWindow(QMainWindow):
         actions.addWidget(button("Paste from Clipboard", self.paste))
         actions.addWidget(button("Analyze Playlist", self.start_analysis, primary=True))
         actions.addWidget(button("Import Local Videos", self.import_files))
+        actions.addWidget(button("Download One Video", lambda: self.navigate(5)))
         body.addLayout(actions)
         v.addWidget(area)
         v.addWidget(heading("Recent projects"))
@@ -246,6 +261,129 @@ class MainWindow(QMainWindow):
         self.dash_message = muted("Double-click a recent project to continue where you left off.")
         v.addWidget(self.dash_message)
         self.stack.addWidget(page)
+
+    def _single_video_page(self):
+        """A separate download workflow; it never invokes the playlist merger."""
+        page = QWidget()
+        v = column(page)
+        v.addWidget(heading("Single Video Downloader", "headline"))
+        v.addWidget(muted(
+            "Save one authorized YouTube video as MP4 or MKV. "
+            "No playlist merging is required."))
+        input_card, body = card()
+        body.addWidget(heading("YouTube video link"))
+        self.single_url = QLineEdit()
+        self.single_url.setPlaceholderText("https://www.youtube.com/watch?v=...")
+        self.single_url.returnPressed.connect(self.start_single_analysis)
+        body.addWidget(self.single_url)
+        row = QHBoxLayout()
+        row.addWidget(button("Paste from Clipboard", lambda: self.single_url.setText(
+            QApplication.clipboard().text().strip())))
+        row.addWidget(button("Analyze Video", self.start_single_analysis, primary=True))
+        body.addLayout(row)
+        v.addWidget(input_card)
+
+        info_card, info = card()
+        info.addWidget(heading("Video information"))
+        self.single_details = muted("Paste a single video link, then click Analyze Video.")
+        info.addWidget(self.single_details)
+        v.addWidget(info_card)
+
+        settings_card, settings = card()
+        settings.addWidget(heading("Download settings"))
+        form = QFormLayout()
+        form.setSpacing(12)
+        self.single_filename = QLineEdit()
+        self.single_filename.setPlaceholderText("Video title (editable after analysis)")
+        form.addRow("Save as", self.single_filename)
+        self.single_folder = QLineEdit(self.settings.get("output_dir", str(Path.home() / "Videos")))
+        form.addRow("Save to", self.single_folder)
+        choose = button("Browse…", self.choose_single_folder)
+        form.addRow("", choose)
+        self.single_quality = QComboBox()
+        self.single_quality.addItems(["best", "2160", "1440", "1080", "720", "480", "360"])
+        form.addRow("Maximum resolution", self.single_quality)
+        self.single_format = QComboBox()
+        self.single_format.addItems(["mp4", "mkv"])
+        form.addRow("Output format", self.single_format)
+        settings.addLayout(form)
+        self.single_download_button = button(
+            "Download Video", self.start_single_download, primary=True)
+        self.single_download_button.setEnabled(False)
+        settings.addWidget(self.single_download_button)
+        settings.addWidget(muted(
+            "Only download content you own or are expressly authorized to retrieve, "
+            "when permitted by platform rules. MP4 may require H.264/AAC encoding "
+            "for compatibility. Inaccessible videos cannot be bypassed."))
+        v.addWidget(settings_card)
+        v.addStretch()
+        self.stack.addWidget(page)
+
+    def choose_single_folder(self):
+        directory = QFileDialog.getExistingDirectory(
+            self, "Choose download folder", self.single_folder.text())
+        if directory:
+            self.single_folder.setText(directory)
+
+    def start_single_analysis(self):
+        if self._busy():
+            return
+        url = self.single_url.text().strip()
+        try:
+            video_id(url)
+        except Exception as exc:
+            QMessageBox.warning(self, "Invalid single video link", str(exc))
+            return
+        self.single_project = None
+        self.single_download_button.setEnabled(False)
+        self._launch(Worker("single_analyze", None, self.store, url),
+                     "Analyzing single video")
+
+    def show_single_project(self, project: Project):
+        self.single_project = project
+        self.single_url.setText(project.source_url)
+        self.single_filename.setText(project.filename)
+        self.single_folder.setText(project.output_dir)
+        self.single_quality.setCurrentText(project.quality)
+        self.single_format.setCurrentText(project.output_format)
+        entry = project.entries[0]
+        resolution = (f"{entry.width} × {entry.height}" if entry.width else
+                      "Choose a download quality below")
+        self.single_details.setText(
+            f"Title: {entry.title}\n{project.stage}\n"
+            f"Duration: {human(entry.duration)}\n"
+            f"Resolution: {resolution}\nVideo ID: {entry.video_id}\n"
+            f"Status: {project.status}" +
+            (f"\nOutput: {project.output_path}" if project.output_path else ""))
+        self.single_download_button.setEnabled(not self._busy())
+        self.navigate(5)
+
+    def start_single_download(self):
+        if not self.single_project or self._busy():
+            return
+        project = self.single_project
+        try:
+            if video_id(self.single_url.text()) != project.entries[0].video_id:
+                raise ValueError("The link changed. Analyze the new video first.")
+            speed = max(0, int(self.speed_box.text().strip() or "0"))
+        except Exception as exc:
+            QMessageBox.warning(self, "Check download settings", str(exc))
+            return
+        response = QMessageBox.question(
+            self, "Download authorization",
+            "Confirm you own this video or have the necessary authorization to "
+            "download it, and that downloading is permitted by the platform rules.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if response != QMessageBox.StandardButton.Yes:
+            return
+        project.filename = self.single_filename.text().strip() or project.title
+        project.output_dir = self.single_folder.text().strip() or str(Path.home() / "Videos")
+        project.output_format = self.single_format.currentText()
+        project.quality = self.single_quality.currentText()
+        project.status = "ready"
+        self.store.save(project)
+        self._launch(Worker("single_download", project, self.store,
+                            speed_limit=speed), "Preparing single video download")
 
     def _editor(self):
         page = QWidget()
@@ -585,6 +723,7 @@ class MainWindow(QMainWindow):
         self.pause_button.setEnabled(False)
         self.pause_button.setText("Pause download")
         self.start_button.setEnabled(False)
+        self.single_download_button.setEnabled(False)
         worker.progress_changed.connect(self._on_progress)
         worker.result_ready.connect(self._on_result)
         worker.error_occurred.connect(self._on_failure)
@@ -609,14 +748,18 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(100)
         if isinstance(value, Project):
             self.store.save(value)
-            self.show_project(value)
+            if value.kind == "single":
+                self.show_single_project(value)
+            else:
+                self.show_project(value)
         else:
-            self.stage_label.setText("Playlist successfully merged!")
+            was_single = self.worker is not None and self.worker.mode == "single_download"
+            headline = "Video downloaded successfully!" if was_single else "Playlist successfully merged!"
+            self.stage_label.setText(headline)
             self.detail_label.setText(value)
             self.logs.appendPlainText(f"Completed: {value}")
             self.refresh_history()
-            QMessageBox.information(self, "Completed",
-                                    f"Playlist successfully merged!\n\n{value}")
+            QMessageBox.information(self, "Completed", f"{headline}\n\n{value}")
             self.navigate(3)
 
     def _on_failure(self, reason):
@@ -625,7 +768,7 @@ class MainWindow(QMainWindow):
         self.stage_label.setText("Operation interrupted")
         self.detail_label.setText(reason[:300])
         self.logs.appendPlainText("ERROR: " + reason)
-        if self.project and self.project.status == "needs_approval":
+        if self.worker and self.worker.mode == "process" and self.project and self.project.status == "needs_approval":
             response = QMessageBox.question(
                 self, "Missing videos", reason[:1600] +
                 "\n\nApprove a partial merge containing only successfully available videos?",
@@ -643,6 +786,8 @@ class MainWindow(QMainWindow):
         self.cancel_button.setEnabled(False)
         self.pause_button.setEnabled(False)
         self.start_button.setEnabled(True)
+        if self.single_project:
+            self.single_download_button.setEnabled(True)
         if self.worker:
             self.worker.deleteLater()
         self.worker = None
@@ -659,11 +804,12 @@ class MainWindow(QMainWindow):
             self.logs.appendPlainText("Cancellation requested. Preserving verified sources.")
 
     def refresh_history(self):
-        projects = self.store.recent()
+        projects = self.store.recent(recover=not self._busy())
         for target in (self.recent, self.history):
             target.clear()
             for p in projects:
-                line = (f"{p.title}\n{p.status.upper()}  •  {len(p.entries)} videos  •  "
+                kind = "Single video" if p.kind == "single" else "Video merge"
+                line = (f"{p.title}\n{kind}  •  {p.status.upper()}  •  {len(p.entries)} videos  •  "
                         f"{p.updated[:16].replace('T', ' ')}")
                 item = QListWidgetItem(line)
                 item.setData(Qt.ItemDataRole.UserRole, p.id)
@@ -682,12 +828,12 @@ class MainWindow(QMainWindow):
     def load_recent(self, item):
         p = self._load_item(item)
         if p:
-            self.show_project(p)
+            self.show_single_project(p) if p.kind == "single" else self.show_project(p)
 
     def open_project_from_history(self, item):
         p = self._load_item(item)
         if p:
-            self.show_project(p)
+            self.show_single_project(p) if p.kind == "single" else self.show_project(p)
 
     def _history_project(self):
         return self._load_item(self.history.currentItem())
@@ -708,7 +854,7 @@ class MainWindow(QMainWindow):
     def edit_selected_project(self):
         p = self._history_project()
         if p:
-            self.show_project(p)
+            self.show_single_project(p) if p.kind == "single" else self.show_project(p)
 
     def save_settings(self):
         try:

@@ -14,6 +14,12 @@
 - Persistent manifests and resumable downloads where supported.
 - GitHub Actions Windows packaging with PyInstaller, FFmpeg and Inno Setup.
 
+## Single Video Downloader
+
+Open **Single Video Downloader** in the left sidebar (or **Download One Video** on Dashboard), paste a standard YouTube watch/Shorts/youtu.be link, and click **Analyze Video**. Review the title, creator and duration. Choose a filename, destination, best quality or a resolution cap, and MP4/MKV. Click **Download Video** and confirm you have permission to save the video. The download has its own progress, cancellation, settings, verified output and Completed history; **it does not merge with other videos**.
+
+MP4 export preserves compatible H.264/AAC files without re-encoding; sources using other codecs are converted for broad Windows playback. MKV can preserve more codecs without conversion. Partial downloads remain in local job storage to allow resuming where yt-dlp and the server support it. Live broadcasts and access-restricted videos are not bypassed.
+
 ## Run from source
 
 Install Python 3.12 or newer and FFmpeg/FFprobe on PATH.
