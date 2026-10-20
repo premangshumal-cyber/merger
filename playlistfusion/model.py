@@ -102,12 +102,12 @@ class ProjectStore:
         with (self.projects / f"{project_id}.json").open(encoding="utf-8") as stream:
             return Project.from_json(json.load(stream))
 
-    def recent(self, limit: int = 30) -> list[Project]:
+    def recent(self, limit: int = 30, recover: bool = True) -> list[Project]:
         result = []
         for path in sorted(self.projects.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
             try:
                 project = self.load(path.stem)
-                if project.status == "processing":
+                if project.status == "processing" and recover:
                     project.status = "interrupted"
                     project.stage = "Interrupted — retry to resume"
                     self.save(project)
