@@ -51,6 +51,7 @@ class Entry:
 class Project:
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     title: str = "Untitled project"
+    kind: str = "playlist"  # playlist, local, or single
     source_url: str = ""
     entries: list[Entry] = field(default_factory=list)
     output_dir: str = field(default_factory=lambda: str(Path.home() / "Videos"))
